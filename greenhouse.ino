@@ -55,7 +55,9 @@ void printData() {
 	Serial.print(" Humidity air=");
 	Serial.print(hmdt_air);
 	Serial.print(" Temp ds=");
-	Serial.println(temp_ds);
+	Serial.print(temp_ds);
+	Serial.print(", Humidity soil=");
+	Serial.println(hmdt_soil);
 }
 
 void loop() {
@@ -107,7 +109,7 @@ void loop() {
 			}
 			state = 4;
 			break;
-		case 5: // Проверка температуры и влажности почвы
+		case 4: // Проверка температуры и влажности почвы
 			// Ждем время чтобы вода успела впитаться
 			if (waitUpdateHmdtSoil) {
 				if (millis() - lastReadTime >= PUMP_WAIT) {
