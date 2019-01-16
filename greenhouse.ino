@@ -1,13 +1,16 @@
 #include <dht11.h>
+#include <Wire.h> // DS1307 подключается через I2C интерфейс и библиотеку Wire 
 #include <OneWire.h>
+#include "RTClib.h"
 
 // i/o pins
-#define DHT_PIN 12
+#define DHT_PIN 7
 #define DS_PIN 2
 #define FAN_PIN 11
 #define LAMP_PIN 9
 #define PUMP_PIN 8
 #define EN_HMDT_SOIL_PIN 4
+#define LED_PIN 10
 #define HUMIDITY_PIN A0
 
 #define TEMP_AIR_MIN 24         // Если температура воздуха ниже указанной включаются лампы накаливания
@@ -23,6 +26,8 @@
 // Экземпляры классов, в которых инкапсулированны данные и методы для работы с датчиками
 DHT11 dht(DHT_PIN);
 OneWire ds(DS_PIN);
+RTC_DS1307 rtc;
+DateTime now;
 
 uint8_t state; // Состояние программы
 int16_t temp_ds, hmdt_soil; // Переменные для хранения значений с датчиков
@@ -32,7 +37,16 @@ unsigned long lastReadTime, lastReadSensors; // Переменные для из
 bool temp_flag, hmdt_flag, pump_flag, waitUpdateHmdtSoil, isSoilOk;
 
 void setup() {
-    Serial.begin(9600);
+    Serial.begin(9600); // 57600
+    //rtc.adjust(DateTime(__DATE__, __TIME__));
+
+    if (!rtc.begin()) {
+        Serial.println("Couldn't find RTC");
+    }
+
+    if (!rtc.isrunning()) {
+        Serial.println("RTC is NOT running!");
+    }
 
     // установка портов
     pinMode(HUMIDITY_PIN, INPUT);
@@ -40,20 +54,14 @@ void setup() {
     pinMode(FAN_PIN, OUTPUT);
     pinMode(PUMP_PIN, OUTPUT);
     pinMode(EN_HMDT_SOIL_PIN, OUTPUT);
+    digitalWrite(EN_HMDT_SOIL_PIN, HIGH);
 
-    lastReadSensors = -1000;
-    lastReadTime = -READ_HMDT_SOIL_MS;
-
-    temp_flag = true;
-    hmdt_flag = true;
-    pump_flag = true;
-    isSoilOk = true;
-    waitUpdateHmdtSoil = false;
     state = 0; // начальное состояние
 }
 
 // Функция вывода данных в терминал
 void printData() {
+    Serial.println();
     Serial.print("Temp dht=");
     Serial.print(temp_dht);
     Serial.print(", Humidity air=");
@@ -62,28 +70,44 @@ void printData() {
     Serial.print(temp_ds);
     Serial.print(", Humidity soil=");
     Serial.println(hmdt_soil);
+    Serial.println();
 }
 
 void loop() {
     switch (state) {
         case 0:
+            lastReadSensors = -1000;
+            lastReadTime = -READ_HMDT_SOIL_MS;
+
+            temp_flag = true;
+            hmdt_flag = true;
+            pump_flag = true;
+            isSoilOk = true;
+            waitUpdateHmdtSoil = false;
             state = 1;
             break;
         case 1:
             // Получение данных с датчиков
-            if (pump_flag) {
+            now = rtc.now(); // Получение текущего времени с часов
+
+            if (pump_flag) { // pump_flag = true когда насос выключен
                 if (!isSoilOk || millis() - lastReadTime >= READ_HMDT_SOIL_MS) {
                     lastReadTime = millis();
-                    digitalWrite(EN_HMDT_SOIL_PIN, HIGH);
 
-                    readDataDS(temp_ds);
-                    hmdt_soil = analogRead(HUMIDITY_PIN);
                     digitalWrite(EN_HMDT_SOIL_PIN, LOW);
+                    readDataDS(ds);
+
+                    // Для повышения точности считывание выполняется несколько раз
+                    for (uint8_t i = 0; i < 5; i++) {
+                        hmdt_soil += analogRead(HUMIDITY_PIN);
+                        delay(100);
+                    }
+                    digitalWrite(EN_HMDT_SOIL_PIN, HIGH);
+                    hmdt_soil /= 5; // Получаем усредненное значение
                 }
             }
 
             if (millis() - lastReadSensors >= 1000) {
-                Serial.println();
                 lastReadSensors = millis();
 
                 readDataDHT(temp_dht, hmdt_air);
@@ -93,7 +117,6 @@ void loop() {
                 // }
 
                 printData();
-                Serial.println();
                 state = 2;
             }
             break;
@@ -127,7 +150,28 @@ void loop() {
             }
             state = 4;
             break;
-        case 4: // Проверка температуры и влажности почвы
+        case 4: // Включение светодиодой ленты по времени
+            Serial.print(now.day(), DEC);
+            Serial.print('/');
+            Serial.print(now.month(), DEC);
+            Serial.print('/');
+            Serial.print(now.year(), DEC);
+            Serial.print(' ');
+            Serial.print(now.hour(), DEC);
+            Serial.print(':');
+            Serial.print(now.minute(), DEC);
+            Serial.print(':');
+            Serial.print(now.second(), DEC);
+            Serial.println();
+
+            if (now.hour() >= 6 && now.hour() < 18) {
+                digitalWrite(LED_PIN, HIGH);
+            }
+            else {
+                digitalWrite(LED_PIN, LOW);
+            }
+            break;
+        case 5: // Проверка температуры и влажности почвы
             // Ждем чтобы вода успела впитаться
             if (waitUpdateHmdtSoil) {
                 if (millis() - lastReadTime >= PUMP_WAIT) {
